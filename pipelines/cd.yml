@@ -1,4 +1,4 @@
-# Azure DevOps Pipeline for Azure Platform Infrastructure
+# Azure DevOps CD Pipeline for Azure Platform Infrastructure
 # This pipeline deploys the Terraform infrastructure to dev, pre, and prd environments
 
 trigger:
@@ -20,45 +20,8 @@ variables:
     value: 'Azure-ServiceConnection'
 
 stages:
-- stage: Validate
-  displayName: 'Validate Terraform'
-  jobs:
-  - job: ValidateTerraform
-    displayName: 'Validate and Plan'
-    pool:
-      vmImage: 'ubuntu-latest'
-    steps:
-    - checkout: self
-    
-    - task: TerraformInstaller@0
-      displayName: 'Install Terraform'
-      inputs:
-        terraformVersion: $(terraformVersion)
-    
-    - task: AzureCLI@2
-      displayName: 'Terraform Format Check'
-      inputs:
-        azureSubscription: $(azureServiceConnection)
-        scriptType: 'bash'
-        scriptLocation: 'inlineScript'
-        inlineScript: |
-          cd terraform
-          terraform fmt -check -diff -recursive
-    
-    - task: AzureCLI@2
-      displayName: 'Terraform Validate'
-      inputs:
-        azureSubscription: $(azureServiceConnection)
-        scriptType: 'bash'
-        scriptLocation: 'inlineScript'
-        inlineScript: |
-          cd terraform
-          terraform init -backend=false
-          terraform validate
-
 - stage: DeployDev
   displayName: 'Deploy to Development'
-  dependsOn: Validate
   condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/develop'))
   jobs:
   - deployment: DeployToDev
@@ -107,7 +70,6 @@ stages:
 
 - stage: DeployPre
   displayName: 'Deploy to Pre-Production'
-  dependsOn: Validate
   condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
   jobs:
   - deployment: DeployToPre
