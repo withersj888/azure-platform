@@ -1,0 +1,56 @@
+# Azure DevOps CI Pipeline for Azure Platform Infrastructure
+# This pipeline validates Terraform code quality and formatting
+
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+  paths:
+    include:
+      - terraform/
+    exclude:
+      - terraform/environments/*/terraform.tfstate*
+
+variables:
+  - name: terraformVersion
+    value: '1.6.0'
+  - name: azureServiceConnection
+    value: 'Azure-ServiceConnection'
+
+stages:
+- stage: Validate
+  displayName: 'Validate Terraform'
+  jobs:
+  - job: ValidateTerraform
+    displayName: 'Validate and Plan'
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - checkout: self
+    
+    - task: TerraformInstaller@0
+      displayName: 'Install Terraform'
+      inputs:
+        terraformVersion: $(terraformVersion)
+    
+    - task: AzureCLI@2
+      displayName: 'Terraform Format Check'
+      inputs:
+        azureSubscription: $(azureServiceConnection)
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          cd terraform
+          terraform fmt -check -diff -recursive
+    
+    - task: AzureCLI@2
+      displayName: 'Terraform Validate'
+      inputs:
+        azureSubscription: $(azureServiceConnection)
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          cd terraform
+          terraform init -backend=false
+          terraform validate
