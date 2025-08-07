@@ -1,0 +1,204 @@
+# Azure DevOps Pipeline for Azure Platform Infrastructure
+# This pipeline deploys the Terraform infrastructure to dev, pre, and prd environments
+
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+  paths:
+    include:
+      - terraform/
+    exclude:
+      - terraform/environments/*/terraform.tfstate*
+
+variables:
+  - group: terraform-secrets
+  - name: terraformVersion
+    value: '1.6.0'
+  - name: azureServiceConnection
+    value: 'Azure-ServiceConnection'
+
+stages:
+- stage: Validate
+  displayName: 'Validate Terraform'
+  jobs:
+  - job: ValidateTerraform
+    displayName: 'Validate and Plan'
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - checkout: self
+    
+    - task: TerraformInstaller@0
+      displayName: 'Install Terraform'
+      inputs:
+        terraformVersion: $(terraformVersion)
+    
+    - task: AzureCLI@2
+      displayName: 'Terraform Format Check'
+      inputs:
+        azureSubscription: $(azureServiceConnection)
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          cd terraform
+          terraform fmt -check -diff -recursive
+    
+    - task: AzureCLI@2
+      displayName: 'Terraform Validate'
+      inputs:
+        azureSubscription: $(azureServiceConnection)
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          cd terraform
+          terraform init -backend=false
+          terraform validate
+
+- stage: DeployDev
+  displayName: 'Deploy to Development'
+  dependsOn: Validate
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/develop'))
+  jobs:
+  - deployment: DeployToDev
+    displayName: 'Deploy to Development Environment'
+    pool:
+      vmImage: 'ubuntu-latest'
+    environment: 'development'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - checkout: self
+          
+          - task: TerraformInstaller@0
+            displayName: 'Install Terraform'
+            inputs:
+              terraformVersion: $(terraformVersion)
+          
+          - task: AzureCLI@2
+            displayName: 'Terraform Init and Plan - Dev'
+            inputs:
+              azureSubscription: $(azureServiceConnection)
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                cd terraform
+                terraform init \
+                  -backend-config="resource_group_name=$(TF_STATE_RESOURCE_GROUP)" \
+                  -backend-config="storage_account_name=$(TF_STATE_STORAGE_ACCOUNT)" \
+                  -backend-config="container_name=tfstate" \
+                  -backend-config="key=dev/terraform.tfstate"
+                
+                terraform plan \
+                  -var-file="environments/dev/terraform.tfvars" \
+                  -out=tfplan-dev
+          
+          - task: AzureCLI@2
+            displayName: 'Terraform Apply - Dev'
+            inputs:
+              azureSubscription: $(azureServiceConnection)
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                cd terraform
+                terraform apply -auto-approve tfplan-dev
+
+- stage: DeployPre
+  displayName: 'Deploy to Pre-Production'
+  dependsOn: Validate
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+  jobs:
+  - deployment: DeployToPre
+    displayName: 'Deploy to Pre-Production Environment'
+    pool:
+      vmImage: 'ubuntu-latest'
+    environment: 'pre-production'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - checkout: self
+          
+          - task: TerraformInstaller@0
+            displayName: 'Install Terraform'
+            inputs:
+              terraformVersion: $(terraformVersion)
+          
+          - task: AzureCLI@2
+            displayName: 'Terraform Init and Plan - Pre'
+            inputs:
+              azureSubscription: $(azureServiceConnection)
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                cd terraform
+                terraform init \
+                  -backend-config="resource_group_name=$(TF_STATE_RESOURCE_GROUP)" \
+                  -backend-config="storage_account_name=$(TF_STATE_STORAGE_ACCOUNT)" \
+                  -backend-config="container_name=tfstate" \
+                  -backend-config="key=pre/terraform.tfstate"
+                
+                terraform plan \
+                  -var-file="environments/pre/terraform.tfvars" \
+                  -out=tfplan-pre
+          
+          - task: AzureCLI@2
+            displayName: 'Terraform Apply - Pre'
+            inputs:
+              azureSubscription: $(azureServiceConnection)
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                cd terraform
+                terraform apply -auto-approve tfplan-pre
+
+- stage: DeployPrd
+  displayName: 'Deploy to Production'
+  dependsOn: DeployPre
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+  jobs:
+  - deployment: DeployToPrd
+    displayName: 'Deploy to Production Environment'
+    pool:
+      vmImage: 'ubuntu-latest'
+    environment: 'production'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - checkout: self
+          
+          - task: TerraformInstaller@0
+            displayName: 'Install Terraform'
+            inputs:
+              terraformVersion: $(terraformVersion)
+          
+          - task: AzureCLI@2
+            displayName: 'Terraform Init and Plan - Prd'
+            inputs:
+              azureSubscription: $(azureServiceConnection)
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                cd terraform
+                terraform init \
+                  -backend-config="resource_group_name=$(TF_STATE_RESOURCE_GROUP)" \
+                  -backend-config="storage_account_name=$(TF_STATE_STORAGE_ACCOUNT)" \
+                  -backend-config="container_name=tfstate" \
+                  -backend-config="key=prd/terraform.tfstate"
+                
+                terraform plan \
+                  -var-file="environments/prd/terraform.tfvars" \
+                  -out=tfplan-prd
+          
+          - task: AzureCLI@2
+            displayName: 'Terraform Apply - Prd'
+            inputs:
+              azureSubscription: $(azureServiceConnection)
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                cd terraform
+                terraform apply -auto-approve tfplan-prd
